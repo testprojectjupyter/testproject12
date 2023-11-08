@@ -1,0 +1,73 @@
+!pip install biopython
+
+from Bio import Entrez
+from bs4 import BeautifulSoup
+import concurrent.futures
+
+# Define your search query
+search_query = '"parathyroid carcinoma" [Title] AND ("2014/01/01"[Date - Publication] : "2023/12/31"[Date - Publication]) AND ("5"[cites] : *)'
+
+# Provide your email address to the Entrez service
+Entrez.email = "your@email.com"
+
+# Perform the PubMed search
+handle = Entrez.esearch(db="pubmed", term=search_query, retmax=1000)  # You can change the retmax as needed
+record = Entrez.read(handle)
+id_list = record["IdList"]
+
+# Function to fetch article information
+def fetch_article_info(pmid):
+    try:
+        record = Entrez.efetch(db="pubmed", id=pmid, rettype="medline", retmode="xml")
+        article_data = record.read()
+        record.close()
+
+        # Parse the article data using BeautifulSoup
+        soup = BeautifulSoup(article_data, 'xml')
+
+        title = soup.find("ArticleTitle")
+        title_text = title.get_text(strip=True) if title else "Title not found"
+        authors = soup.find_all("Author")
+        first_author = authors[0]
+        first_author_last_name = first_author.find("LastName").get_text(strip=True)
+        first_author_initials = first_author.find("Initials").get_text(strip=True)
+
+        journal = soup.find("Title")
+        journal_name = journal.get_text(strip=True) if journal else "Journal not found"
+
+        pub_date = soup.find("PubDate")
+        pub_date_text = pub_date.get_text(strip=True) if pub_date else "Publication Date not found"
+
+        pub_year = pub_date.find("Year").get_text(strip=True) if pub_date else "Publication Year not found"
+        abstract = soup.find("AbstractText")
+        abstract_text = abstract.get_text(strip=True) if abstract else "Abstract not found"
+        page_numbers = soup.find("MedlinePgn")
+        page_numbers_text = page_numbers.get_text(strip=True) if page_numbers else "Page numbers not found"
+        doi = soup.find("ELocationID", EIdType='doi')
+        doi_text = doi.get_text(strip=True) if doi else "DOI not found"
+
+        citation = f"{first_author_last_name}. {pub_year}. {title_text} {doi_text}"
+
+        # Combine the extracted information into a single string
+        article_text = f"\033[1mAbstract:\033[0m {abstract_text}\n\033[1mCitation:\033[0m {citation}"
+
+        return article_text
+    except Exception as e:
+        return f"Error fetching article {pmid}: {str(e)}"
+
+# Initialize an empty list to store the extracted information
+article_info = []
+# Use ThreadPoolExecutor for multithreading to fetch information in parallel
+with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+    # Iterate through the list of PubMed IDs and fetch information for each article in parallel
+    future_to_pmid = {executor.submit(fetch_article_info, pmid): pmid for pmid in id_list}
+    for index, future in enumerate(concurrent.futures.as_completed(future_to_pmid), 1):
+        pmid = future_to_pmid[future]
+        article_text = future.result()
+        article_info.append(f"Article {index} ({pmid}):\n{article_text}")
+
+# Join the extracted information into a final cleaned text
+final_text = '\n'.join(article_info)
+
+# Print the final cleaned text with enumeration
+print(final_text)
